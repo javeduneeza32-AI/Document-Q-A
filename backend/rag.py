@@ -9,7 +9,7 @@ from langchain_community.vectorstores import FAISS
 class DocumentQASystem:
     def __init__(self):
         self.embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-        self.llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.2)
+        self.llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.2)
         self.vectorstore = None
 
     def load_and_index(self, pdf_paths: List[str]) -> str:
