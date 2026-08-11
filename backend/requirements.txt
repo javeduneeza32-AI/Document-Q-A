@@ -6,3 +6,4 @@ google-generativeai
 langchain-google-genai
 langchain-text-splitters
 langchain-community
+python-multipart
