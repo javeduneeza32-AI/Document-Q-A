@@ -2,8 +2,9 @@ fastapi
 uvicorn
 PyPDF2
 python-dotenv
-google-generativeai
 langchain-google-genai
 langchain-text-splitters
 langchain-community
 python-multipart
+gunicorn
+google-genai
