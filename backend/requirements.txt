@@ -1,10 +1,14 @@
 fastapi
 uvicorn
-PyPDF2
+sqlalchemy
+psycopg2-binary
+passlib[bcrypt]
+python-jose[cryptography]
 python-dotenv
+google-genai
+PyPDF2
+python-multipart
 langchain-google-genai
 langchain-text-splitters
 langchain-community
-python-multipart
 gunicorn
-google-genai

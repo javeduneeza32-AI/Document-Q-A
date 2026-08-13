@@ -1,108 +1,97 @@
 import os
-import PyPDF2
-import google.genai as genai  # <--- Uses the official client directly
-from fastapi import FastAPI, UploadFile, File, HTTPException
+import shutil
+from fastapi import FastAPI, File, UploadFile, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from dotenv import load_dotenv
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from rag import DocumentQASystem
 
-# Load API Key from .env file
+# New Imports for Auth
+from database import get_db
+from models import User, Document
+from auth import get_current_user, get_current_admin_user, get_password_hash, create_access_token, verify_password
+
 load_dotenv()
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    print("!!!!!!!!!!!!!! CRITICAL ERROR: API KEY NOT FOUND IN .env !!!!!!!!!!!!!!")
-else:
-    print("✅ API Key successfully loaded from .env file.")
 
-# 1. Initialize FastAPI
 app = FastAPI()
 
-# 2. CORS Configuration
+# CORS - Add your Netlify URL here
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://document-q-a.netlify.app",
+        "http://localhost:5173",
+        "http://localhost:5174"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 3. Data Models
+UPLOAD_DIR = "documents"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+qa_system = DocumentQASystem()
+
 class QueryRequest(BaseModel):
     question: str
 
-# 4. Storage for PDF content
-pdf_text_chunks = []
+# ------------------ AUTHENTICATION ENDPOINTS ------------------
+@app.post("/auth/signup")
+async def signup(username: str, email: str, password: str, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter((User.username == username) | (User.email == email)).first()
+    if existing_user:
+        raise HTTPException(400, "Username or email already registered")
+    hashed = get_password_hash(password)
+    new_user = User(username=username, email=email, hashed_password=hashed, role="user")
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+    return {"message": "User created successfully"}
 
-# 5. TEST ENDPOINT
-@app.get("/")
-def read_root():
-    return {"message": "FastAPI Backend is running!"}
+@app.post("/auth/login")
+async def login(username: str, password: str, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.hashed_password):
+        raise HTTPException(401, "Invalid credentials")
+    token = create_access_token(data={"sub": user.username})
+    return {"access_token": token, "token_type": "bearer", "role": user.role}
 
-# 6. UPLOAD ENDPOINT
+# ------------------ ADMIN ENDPOINT ------------------
+@app.get("/admin/users")
+async def get_all_users(current_admin: User = Depends(get_current_admin_user), db: Session = Depends(get_db)):
+    users = db.query(User).all()
+    return [{"id": u.id, "username": u.username, "email": u.email, "role": u.role} for u in users]
+
+# ------------------ APP CORE ENDPOINTS ------------------
 @app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
-    global pdf_text_chunks
-    try:
-        pdf_reader = PyPDF2.PdfReader(file.file)
-        all_text = ""
-        for page in pdf_reader.pages:
-            text = page.extract_text()
-            if text:
-                all_text += text + "\n"
+async def upload_file(file: UploadFile = File(...), current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    for f in os.listdir(UPLOAD_DIR):
+        os.remove(os.path.join(UPLOAD_DIR, f))
+    
+    if not file.filename.endswith(".pdf"):
+        raise HTTPException(400, "Only PDFs allowed")
+        
+    path = os.path.join(UPLOAD_DIR, file.filename)
+    with open(path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    msg = qa_system.load_and_index([path])
+    
+    # Save the document to the user's history in the database
+    new_doc = Document(filename=file.filename, user_id=current_user.id)
+    db.add(new_doc)
+    db.commit()
+    
+    return {"message": msg, "filename": os.path.basename(path)}
 
-        if not all_text.strip():
-            raise HTTPException(status_code=400, detail="PDF appears to have no readable text.")
-
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-        pdf_text_chunks = text_splitter.split_text(all_text)
-
-        return {
-            "message": "File uploaded and indexed successfully!",
-            "filename": file.filename,
-            "status": "success",
-            "chunks_created": len(pdf_text_chunks)
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
-
-# 7. QUERY ENDPOINT (USING OFFICIAL GOOGLE CLIENT DIRECTLY)
 @app.post("/query")
-async def ask_question(request: QueryRequest):
-    global pdf_text_chunks
-    
-    if not pdf_text_chunks:
-        raise HTTPException(status_code=400, detail="No documents loaded. Please upload a PDF first.")
-    
-    try:
-        # Initialize the official client (No LangChain wrapper, so no v1beta bug!)
-        client = genai.Client(api_key=api_key)
-        
-        context = "\n\n".join(pdf_text_chunks)
-        prompt = f"""
-        You are a helpful AI assistant. Answer the user's question based ONLY on the context below. 
-        If the answer isn't in the text, say you don't know.
-        
-        Context:
-        {context}
+async def query_endpoint(request: QueryRequest, current_user: User = Depends(get_current_user)):
+    if not qa_system.vectorstore:
+        raise HTTPException(400, "No documents loaded.")
+    return qa_system.query(request.question)
 
-        Question: {request.question}
-        Answer:
-        """
-        
-        # Call the official API
-        response = client.models.generate_content(
-            model='models/gemini-3.6-flash', 
-            contents=prompt
-        )
-        
-        return {
-            "question": request.question,
-            "answer": response.text,  # direct response from Google
-            "status": "success"
-        }
-    except Exception as e:
-        print(f"\n🔥🔥🔥 CRASH ERROR IN BACKEND: {e} 🔥🔥🔥\n")
-        import traceback
-        traceback.print_exc() 
-        raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
+@app.get("/")
+async def root():
+    return {"status": "Server is running!"}
