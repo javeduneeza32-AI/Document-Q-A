@@ -37,23 +37,32 @@ qa_system = DocumentQASystem()
 class QueryRequest(BaseModel):
     question: str
 
-# ------------------ AUTHENTICATION ENDPOINTS ------------------
+# ---------------- FIXED AUTH MODELS & ENDPOINTS ----------------
+class SignupRequest(BaseModel):
+    username: str
+    email: str
+    password: str
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
 @app.post("/auth/signup")
-async def signup(username: str, email: str, password: str, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter((User.username == username) | (User.email == email)).first()
+async def signup(data: SignupRequest, db: Session = Depends(get_db)):
+    existing_user = db.query(User).filter((User.username == data.username) | (User.email == data.email)).first()
     if existing_user:
         raise HTTPException(400, "Username or email already registered")
-    hashed = get_password_hash(password)
-    new_user = User(username=username, email=email, hashed_password=hashed, role="user")
+    hashed = get_password_hash(data.password)
+    new_user = User(username=data.username, email=data.email, hashed_password=hashed, role="user")
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
     return {"message": "User created successfully"}
 
 @app.post("/auth/login")
-async def login(username: str, password: str, db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == username).first()
-    if not user or not verify_password(password, user.hashed_password):
+async def login(data: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(User).filter(User.username == data.username).first()
+    if not user or not verify_password(data.password, user.hashed_password):
         raise HTTPException(401, "Invalid credentials")
     token = create_access_token(data={"sub": user.username})
     return {"access_token": token, "token_type": "bearer", "role": user.role}
@@ -78,8 +87,6 @@ async def upload_file(file: UploadFile = File(...), current_user: User = Depends
         shutil.copyfileobj(file.file, buffer)
     
     msg = qa_system.load_and_index([path])
-    
-    # Save the document to the user's history in the database
     new_doc = Document(filename=file.filename, user_id=current_user.id)
     db.add(new_doc)
     db.commit()
