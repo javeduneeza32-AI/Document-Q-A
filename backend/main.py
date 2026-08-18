@@ -19,11 +19,7 @@ app = FastAPI()
 # CORS - Add your Netlify URL here
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://document-q-a.netlify.app",
-        "http://localhost:5173",
-        "http://localhost:5174"
-    ],
+    allow_origins=["http://localhost:5173", "https://document-q-a.netlify.app"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
