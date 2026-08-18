@@ -8,10 +8,12 @@ python-jose[cryptography]
 python-dotenv
 google-genai
 PyPDF2
+pypdf
 python-multipart
 langchain-google-genai
 langchain-text-splitters
 langchain-community
+langchain-core
 gunicorn
 google-generativeai
-pypdf
+faiss-cpu
