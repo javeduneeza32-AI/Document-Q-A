@@ -12,3 +12,4 @@ langchain-google-genai
 langchain-text-splitters
 langchain-community
 gunicorn
+google-generativeai
